@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+*.pem
+*.key
+
+# 本地 UI 验收截图 / 生成源图，不入库
+.qoder-preview/
+vibe_images/
+.local-uploads/

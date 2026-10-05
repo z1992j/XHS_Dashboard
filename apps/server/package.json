@@ -1,0 +1,26 @@
+{
+  "name": "xhs-dashboard-server",
+  "version": "1.0.0",
+  "private": true,
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "vitest run"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "小红书运营工作台后端 API（Express 5 + MySQL）",
+  "dependencies": {
+    "compression": "^1.8.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "helmet": "^8.1.0",
+    "mysql2": "^3.22.6"
+  },
+  "devDependencies": {
+    "pm2": "^7.0.3",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,109 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/server/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  ECS_HOST: ${{ secrets.ECS_HOST }}
+  ECS_USER: ${{ secrets.ECS_USER }}
+  ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+
+jobs:
+  test:
+    name: Test gate (backend)
+    uses: ./.github/workflows/test.yml
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "$ECS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      # 只上传路由模块与 pm2 配置，不上传 src/index.js ——
+      # 线上 broadband-api 的入口文件以服务器现状为准，它同时挂着别的模块。
+      - name: Deploy backend files to ECS
+        run: |
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o IdentitiesOnly=yes \
+            apps/server/src/xhs-writer.js \
+            ${ECS_USER}@${ECS_HOST}:~/broadband-api/src/
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o IdentitiesOnly=yes \
+            apps/server/ecosystem.config.js ${ECS_USER}@${ECS_HOST}:~/broadband-api/ecosystem.config.js
+
+      - name: Write version fingerprint on ECS
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o IdentitiesOnly=yes \
+            ${ECS_USER}@${ECS_HOST} "echo '$GITHUB_SHA' > ~/broadband-api/VERSION"
+
+      # 沿用线上既有的上传目录，不要改：/api/xhs/uploads/* 由后端从这个目录
+      # 读图，历史配图都在这里，换目录等于把老笔记的图全弄丢。
+      - name: Ensure uploads directory exists
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o IdentitiesOnly=yes \
+            ${ECS_USER}@${ECS_HOST} "sudo mkdir -p /var/www/xhs-writer/uploads && sudo chown admin:admin /var/www/xhs-writer/uploads"
+
+      - name: Zero-downtime reload
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o IdentitiesOnly=yes \
+            ${ECS_USER}@${ECS_HOST} "cd ~/broadband-api && (npx pm2 reload ecosystem.config.js || npx pm2 start ecosystem.config.js) && npx pm2 save"
+
+      - name: Verify deployment (with retry and diagnostics)
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o IdentitiesOnly=yes \
+            ${ECS_USER}@${ECS_HOST} 'bash -s' <<'REMOTE'
+            for i in 1 2 3 4 5 6; do
+              if curl -sf http://localhost:3000/api/xhs/health; then
+                echo ' ✅ Backend OK'
+                exit 0
+              fi
+              echo "attempt $i failed, retrying..."
+              sleep 5
+            done
+            echo '❌ Backend FAILED — collecting diagnostics:'
+            echo '--- PM2 status ---'
+            cd ~/broadband-api && npx pm2 status
+            echo '--- Last 20 lines of error log ---'
+            tail -20 /home/admin/logs/broadband-api-error.log 2>/dev/null || true
+            tail -20 ~/.pm2/logs/broadband-api-error.log 2>/dev/null || true
+            exit 1
+          REMOTE
+
+      - name: Notify on deployment failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = [
+              '## 🚨 后端部署失败',
+              '',
+              `- 时间: ${new Date().toISOString()}`,
+              `- 提交: ${context.sha.slice(0, 7)} (${context.sha})`,
+              `- 运行: ${context.serverUrl || 'GitHub'}/actions/runs/${context.runId}`,
+              '',
+              '请检查 Actions 日志，必要时 SSH 到 ECS：',
+              '```bash',
+              `ssh ${process.env.ECS_USER || 'admin'}@${process.env.ECS_HOST}`,
+              "cd ~/broadband-api && npx pm2 status",
+              'tail -50 ~/.pm2/logs/broadband-api-out.log',
+              '```',
+            ].join('\n');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 后端部署失败 ${new Date().toISOString().slice(0, 16)}`,
+              body,
+            });

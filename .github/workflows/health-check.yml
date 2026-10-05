@@ -1,0 +1,131 @@
+name: Health Check
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check API + Workbench health
+        run: |
+          set -e
+          FAILURES=""
+
+          # 1. 后端健康检查
+          HTTP_CODE=$(curl -s -o /tmp/health_body -w "%{http_code}" --max-time 15 \
+            http://47.252.19.224/api/xhs/health || echo "000")
+          echo "API /api/xhs/health -> HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            FAILURES="${FAILURES} API_health(${HTTP_CODE})"
+          fi
+
+          # 2. 工作台外壳
+          HTTP_CODE2=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
+            http://47.252.19.224/dashboard/ || echo "000")
+          echo "Workbench /dashboard/ -> HTTP $HTTP_CODE2"
+          if [ "$HTTP_CODE2" != "200" ]; then
+            FAILURES="${FAILURES} Dashboard(${HTTP_CODE2})"
+          fi
+
+          # 3. 销售订单模块 —— 它是 iframe 里的静态页，单独探一次。
+          #    外壳 200 不代表它在：漏拷 public/orders 或路径前缀不匹配时，
+          #    外壳照常打开，只有点进「销售订单」才看到空白。
+          HTTP_CODE3=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
+            http://47.252.19.224/dashboard/orders/index.html || echo "000")
+          echo "Orders /dashboard/orders/index.html -> HTTP $HTTP_CODE3"
+          if [ "$HTTP_CODE3" != "200" ]; then
+            FAILURES="${FAILURES} Orders(${HTTP_CODE3})"
+          fi
+
+          # 4. Landing 页
+          HTTP_CODE4=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
+            http://47.252.19.224/ || echo "000")
+          echo "Landing / -> HTTP $HTTP_CODE4"
+          if [ "$HTTP_CODE4" != "200" ]; then
+            FAILURES="${FAILURES} Landing(${HTTP_CODE4})"
+          fi
+
+          if [ -n "$FAILURES" ]; then
+            echo "❌ HEALTH CHECK FAILED:$FAILURES"
+            echo "HEALTH_FAILURES=$FAILURES" >> "$GITHUB_ENV"
+            exit 1
+          fi
+          echo "✅ All endpoints healthy"
+
+      - name: Notify on failure (deduplicated)
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'health-alert',
+              per_page: 1,
+            });
+            if (issues.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues[0].number,
+                body: `仍在异常中 — ${new Date().toISOString()}\n失败项: ${process.env.HEALTH_FAILURES || '未知'}`,
+              });
+              return;
+            }
+            const body = [
+              '## 🚨 线上服务健康检查失败',
+              '',
+              `- 时间: ${new Date().toISOString()}`,
+              `- 失败项: ${process.env.HEALTH_FAILURES || '未知'}`,
+              `- 地址: http://47.252.19.224/dashboard/`,
+              '',
+              '请检查 ECS 服务状态:',
+              '```bash',
+              'ssh admin@47.252.19.224',
+              "cd ~/broadband-api && npx pm2 status",
+              'curl http://localhost:3000/api/xhs/health',
+              'sudo systemctl status nginx',
+              '```',
+            ].join('\n');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 线上服务异常 ${new Date().toISOString().slice(0, 16)}`,
+              body,
+              labels: ['health-alert'],
+            });
+
+      - name: Auto-close issue when healthy
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'health-alert',
+              per_page: 10,
+            });
+            for (const issue of issues) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `✅ 服务已恢复 — ${new Date().toISOString()}`,
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+              });
+            }

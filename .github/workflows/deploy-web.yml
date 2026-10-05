@@ -1,0 +1,136 @@
+name: Deploy Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - 'landing/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  ECS_HOST: ${{ secrets.ECS_HOST }}
+  ECS_USER: ${{ secrets.ECS_USER }}
+  ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+
+jobs:
+  test:
+    name: Test gate (frontend)
+    uses: ./.github/workflows/test.yml
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org/'
+
+      - name: Install dependencies
+        working-directory: apps/web
+        run: npm ci --no-audit --no-fund --loglevel=http
+
+      - name: Install Linux native bindings (lightningcss fix)
+        working-directory: apps/web
+        run: |
+          npm install lightningcss-linux-x64-gnu@1.32.0 --no-save 2>/dev/null || true
+
+      - name: Build frontend
+        working-directory: apps/web
+        run: npx vite build
+
+      - name: Write version fingerprint
+        working-directory: apps/web
+        run: echo "$GITHUB_SHA" > dist/version.txt
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "$ECS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      # 整包近原子替换：先解到 .new，成功后再 mv 换名，失败保留 .old 可回滚。
+      # 订单模块的静态文件（public/orders/**）随 dist 一起走，不需要单独部署。
+      - name: Deploy frontend to ECS (near-atomic swap)
+        run: |
+          tar czf /tmp/dashboard-dist.tar.gz -C apps/web/dist .
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o IdentitiesOnly=yes \
+            /tmp/dashboard-dist.tar.gz ${ECS_USER}@${ECS_HOST}:/tmp/dashboard-dist.tar.gz
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o IdentitiesOnly=yes \
+            ${ECS_USER}@${ECS_HOST} 'bash -s' <<'REMOTE'
+            set -e
+            sudo rm -rf /var/www/xhs-dashboard.new
+            sudo mkdir -p /var/www/xhs-dashboard.new
+            sudo tar xzf /tmp/dashboard-dist.tar.gz -C /var/www/xhs-dashboard.new
+            sudo chown -R admin:admin /var/www/xhs-dashboard.new
+            # 保住上一版目录里的 uploads：万一哪天把 XHS_UPLOAD_DIR 指到
+            # web root 下面，换目录就会把历史配图一起换掉。
+            if [ -d /var/www/xhs-dashboard/uploads ]; then
+              cp -a /var/www/xhs-dashboard/uploads /var/www/xhs-dashboard.new/uploads
+            fi
+            sudo rm -rf /var/www/xhs-dashboard.old
+            if [ -d /var/www/xhs-dashboard ]; then sudo mv /var/www/xhs-dashboard /var/www/xhs-dashboard.old; fi
+            sudo mv /var/www/xhs-dashboard.new /var/www/xhs-dashboard
+          REMOTE
+
+      - name: Deploy landing page
+        run: |
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o IdentitiesOnly=yes \
+            landing/index.html ${ECS_USER}@${ECS_HOST}:/tmp/landing.html
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o IdentitiesOnly=yes \
+            ${ECS_USER}@${ECS_HOST} "sudo cp /tmp/landing.html /var/www/shuwen-landing/index.html"
+
+      - name: Verify deployment (rollback on failure)
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o IdentitiesOnly=yes \
+            ${ECS_USER}@${ECS_HOST} 'bash -s' <<'REMOTE'
+            if curl -sf http://localhost/dashboard/ > /dev/null; then
+              echo '✅ Frontend OK'
+              sudo rm -rf /var/www/xhs-dashboard.old
+            else
+              echo '❌ Frontend FAILED — rolling back'
+              if [ -d /var/www/xhs-dashboard.old ]; then
+                sudo rm -rf /var/www/xhs-dashboard
+                sudo mv /var/www/xhs-dashboard.old /var/www/xhs-dashboard
+                echo '↩️  Rolled back to previous release'
+              fi
+              exit 1
+            fi
+          REMOTE
+
+      - name: Notify on deployment failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = [
+              '## 🚨 前端部署失败',
+              '',
+              `- 时间: ${new Date().toISOString()}`,
+              `- 提交: ${context.sha.slice(0, 7)} (${context.sha})`,
+              `- 运行: ${context.serverUrl || 'GitHub'}/actions/runs/${context.runId}`,
+              `- 地址: http://${process.env.ECS_HOST || ''}/dashboard/`,
+              '',
+              '若报的是 404，多半是 nginx 还没有 /dashboard/ 这个 location ——',
+              '见 deploy/nginx/xhs-dashboard.conf，需要人工在服务器上应用一次。',
+              '',
+              '```bash',
+              `ssh ${process.env.ECS_USER || 'admin'}@${process.env.ECS_HOST}`,
+              'sudo ls /var/www/ | grep xhs-dashboard',
+              '```',
+            ].join('\n');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 前端部署失败 ${new Date().toISOString().slice(0, 16)}`,
+              body,
+            });

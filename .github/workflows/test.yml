@@ -1,0 +1,83 @@
+name: CI Tests
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  server:
+    name: Backend (Node syntax + Vitest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org/'
+      - name: Configure npm resiliency
+        run: |
+          npm config set fetch-timeout 60000
+          npm config set fetch-retries 5
+          npm config set fetch-retry-mintimeout 10000
+          npm config set fetch-retry-maxtimeout 60000
+      - name: Install
+        run: npm ci --no-audit --no-fund --loglevel=http
+        timeout-minutes: 6
+      - name: Syntax check
+        run: |
+          node --check src/index.js
+          node --check src/xhs-writer.js
+      - name: Vitest
+        run: npm test
+
+  web:
+    name: Frontend (TypeScript strict + Vitest + Build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org/'
+      - name: Configure npm resiliency
+        run: |
+          npm config set fetch-timeout 60000
+          npm config set fetch-retries 5
+          npm config set fetch-retry-mintimeout 10000
+          npm config set fetch-retry-maxtimeout 60000
+      - name: Install
+        run: npm ci --no-audit --no-fund --loglevel=http
+        timeout-minutes: 6
+
+      # lightningcss 的可选原生依赖在 npm ci 下装不上，Tailwind 4 一到
+      # 构建就报 Cannot find module '../lightningcss.linux-x64-gnu.node'。
+      # --no-save 保证不动 lockfile。
+      - name: Install Linux native bindings (lightningcss fix)
+        run: |
+          npm install lightningcss-linux-x64-gnu@1.32.0 --no-save 2>/dev/null || true
+
+      - name: TypeScript strict check
+        run: npx tsc --noEmit
+      - name: Vitest
+        run: npm test
+      - name: Production build
+        run: npx vite build
+
+      # 平移过来的销售订单是 public/orders/ 下的静态代码，没有构建步骤，
+      # 也没有任何门禁会替它检查语法 —— 少一个括号就是一整页白屏。
+      # 这里补一道最低限度的解析检查（只解析不执行，不碰 DOM）。
+      - name: Sales-order static app syntax check
+        run: |
+          node --check public/orders/app.js
+          node --check public/orders/sw.js
+          node -e "JSON.parse(require('fs').readFileSync('public/orders/manifest.webmanifest','utf8'))"
