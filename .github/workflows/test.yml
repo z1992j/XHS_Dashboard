@@ -2,7 +2,11 @@ name: CI Tests
 
 on:
   push:
-    branches: [main, dev]
+    # 任意分支都跑。仓库现在只有工作分支（没有 main），原来的
+    # [main, dev] 会让推上去的代码一次 CI 都不过 —— 而这些门禁
+    # （tsc strict / vitest / 构建产物相对路径 / PWA 资产）正是
+    # 上一轮「全绿但其实没上线」的教训换来的，不能只在合并后生效。
+    branches: ['**']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -73,11 +77,20 @@ jobs:
       - name: Production build
         run: npx vite build
 
-      # 平移过来的销售订单是 public/orders/ 下的静态代码，没有构建步骤，
-      # 也没有任何门禁会替它检查语法 —— 少一个括号就是一整页白屏。
-      # 这里补一道最低限度的解析检查（只解析不执行，不碰 DOM）。
-      - name: Sales-order static app syntax check
+      # 订单模块现在是原生 React，随 SPA 一起构建；它不再有 public/orders/
+      # 那样的独立静态目录。但「一份 dist 放任意静态路径」这个前提是
+      # base:'./' 撑起来的 —— 谁把它改回绝对路径，部署就会被绑死在 /dashboard/，
+      # 换目录时表现为白屏而不是报错。这里在构建产物层面直接卡住。
+      - name: Verify path-agnostic build
         run: |
-          node --check public/orders/app.js
-          node --check public/orders/sw.js
-          node -e "JSON.parse(require('fs').readFileSync('public/orders/manifest.webmanifest','utf8'))"
+          grep -q 'src="\./assets/' dist/index.html || { echo '❌ index.html 的资源不是相对路径（vite base 被改了？）'; exit 1; }
+          grep -q 'href="\./\|href="manifest' dist/index.html || { echo '❌ manifest 引用异常'; exit 1; }
+
+      # PWA 资产由 public/ 原样拷进 dist，漏拷不会让构建失败，只会让
+      # 「装到主屏」和离线路径静默失效 —— 上面那些都还是绿的。
+      - name: Verify PWA assets shipped
+        run: |
+          for f in sw.js manifest.webmanifest icon-192.png icon-512.png logo.svg; do
+            [ -f "dist/$f" ] || { echo "❌ dist/$f 缺失"; exit 1; }
+          done
+          node -e "JSON.parse(require('fs').readFileSync('dist/manifest.webmanifest','utf8'))"

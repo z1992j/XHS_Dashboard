@@ -270,21 +270,14 @@ body {
   margin: 0 auto;
   padding: 18px 20px 48px;
 }
-/* 销售订单模块要占满整幅宽度：外层再套一层居中宽度会把它的 17 列表格压窄。 */
+/* 销售订单模块要占满整幅宽度：外层再套一层居中宽度会把它的 17 列表格压窄。
+   内边距交给订单页自己的 .orders-page 控制，这里不收窄。 */
 .app-main-flush {
   max-width: none;
   padding: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
-}
-/* 配合 .app-main-flush：整壳锁在一屏内，滚动只发生在 iframe 内部。
-   不这么锁的话外层还会多出 1px（header 有 1px 下边框），
-   页面会出现一根没用的外滚动条。 */
-.app-shell-flush {
-  height: 100vh;
-  height: 100dvh;
-  overflow: hidden;
 }
 
 /* ====== 工作台首页 ====== */
@@ -398,62 +391,6 @@ body {
   font-size: 11px;
   color: var(--text-3);
   letter-spacing: 0.02em;
-}
-
-/* ====== 销售订单宿主（iframe） ======
-   高度不写死 calc：.app-shell-flush 已经把整壳锁成一屏，
-   iframe 用 flex:1 吃掉头部栏以外的全部空间。
-   订单页的表头吸顶和 .table-wrap 的 max-height:calc(100vh - 200px)
-   按「整页只有一个滚动容器」设计，viewport 就是 iframe 高度，
-   这些规则原样成立。 */
-.orders-host {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  display: flex;
-}
-.orders-frame {
-  flex: 1;
-  width: 100%;
-  min-height: 0;
-  border: 0;
-  display: block;
-  background: var(--bg);
-}
-.orders-host-loading {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  font-size: 12.5px;
-  color: var(--text-3);
-  background: var(--bg);
-  z-index: 1;
-}
-/* 逃生口：iframe 里出问题（登录卡住、弹窗被遮）时能跳出去单独开一页。 */
-.orders-open-newtab {
-  position: fixed;
-  right: 14px;
-  bottom: 14px;
-  z-index: 20;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 11px;
-  border-radius: var(--r-full);
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-  color: var(--text-2);
-  font-size: 11.5px;
-  text-decoration: none;
-  box-shadow: var(--shadow-md);
-}
-.orders-open-newtab:hover {
-  color: var(--primary);
-  border-color: var(--primary);
 }
 
 /* ====== Buttons ====== */

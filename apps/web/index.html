@@ -2,12 +2,19 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover：订单表要占满宽度，刘海屏的安全区交给 CSS 处理 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#17306e" />
-    <title>小红书运营工作台</title>
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="运营工作台" />
+    <title>红薯运营工作台 — 仿写 · 素材 · 订单</title>
     <!-- SVG 在先：矢量、任意倍率清晰；不认 SVG 图标的浏览器回落到 png -->
     <link rel="icon" type="image/svg+xml" href="%BASE_URL%logo.svg" />
     <link rel="alternate icon" type="image/png" href="%BASE_URL%logo.png" />
+    <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="%BASE_URL%icon-192.png" />
   </head>
   <body>
     <div id="root"></div>

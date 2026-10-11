@@ -1,0 +1,14 @@
+{
+  "name": "红薯运营工作台",
+  "short_name": "运营工作台",
+  "description": "文案仿写 · 素材库 · 销售订单",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#17306e",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

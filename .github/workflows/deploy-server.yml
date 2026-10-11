@@ -1,5 +1,8 @@
 name: Deploy Backend
 
+# 前置条件：仓库 secrets ECS_HOST / ECS_USER / ECS_SSH_KEY（当前为空，没配必失败）。
+# 后端探活打的是服务器本机 :3000 的 /api/xhs/health —— 这是真实的 Express 进程，
+# 不经过 nginx 的 catch-all，所以这里 200 是可信的；对外部 URL 的探活必须看内容。
 on:
   push:
     branches: [main]

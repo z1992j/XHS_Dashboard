@@ -5,8 +5,10 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  // 工作台部署在独立目录，与原来的 /writer/ 分开，两套前端可以并存灰度。
-  base: '/dashboard/',
+  // 相对 base + HashRouter = 一份 dist 可以放到任何静态路径下直接跑
+  // （/workbench/、/dashboard/ 都行），换路径不需要重新构建。
+  // 改成绝对路径会把部署绑死在一个子目录上，CI 里有检查卡住这一点。
+  base: './',
   server: {
     host: true,
     port: 5173,

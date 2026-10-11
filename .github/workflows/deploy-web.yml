@@ -1,5 +1,13 @@
 name: Deploy Frontend
 
+# 前置条件（缺一都不会真的上线）：
+#   1. 仓库 secrets：ECS_HOST / ECS_USER / ECS_SSH_KEY。当前仓库里这三个是空的，
+#      没配的话本流水线在「Setup SSH」之后必然失败。
+#   2. 服务器上 nginx 已有 location /dashboard/（见 deploy/nginx/xhs-dashboard.conf），
+#      并且 web 根指向 /var/www/xhs-dashboard。
+# 只配了 secrets、没配 nginx 时，最后一步的内容检查会失败并把改动回滚 —— 这是
+# 有意的：线上 nginx 是 catch-all，任何路径都返回 200 的 landing 页，按状态码
+# 判「部署成功」正是上一版从没上线却没报红的原因。
 on:
   push:
     branches: [main]
@@ -59,7 +67,8 @@ jobs:
           ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
       # 整包近原子替换：先解到 .new，成功后再 mv 换名，失败保留 .old 可回滚。
-      # 订单模块的静态文件（public/orders/**）随 dist 一起走，不需要单独部署。
+      # 订单模块已经是 SPA 的一部分（构建进 bundle），不再有第二个静态目录，
+      # 换目录不会漏拷半边。
       - name: Deploy frontend to ECS (near-atomic swap)
         run: |
           tar czf /tmp/dashboard-dist.tar.gz -C apps/web/dist .
@@ -89,11 +98,38 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o IdentitiesOnly=yes \
             ${ECS_USER}@${ECS_HOST} "sudo cp /tmp/landing.html /var/www/shuwen-landing/index.html"
 
+      # 必须验内容，不能只看状态码。
+      # 线上 nginx 有 catch-all：任何不存在的路径都返回 200 和 landing 页
+      # （/nope-xyz 也是 200，实测过）。所以 location /dashboard/ 没配、
+      # 目录没建的时候，curl -sf 照样通过 —— 上一版就是这么「部署成功」的，
+      # 实际上工作台从没上线过。
+      # 订单页已进 SPA bundle，没有独立文件可探；探入口页 + PWA 资产即可。
       - name: Verify deployment (rollback on failure)
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o IdentitiesOnly=yes \
             ${ECS_USER}@${ECS_HOST} 'bash -s' <<'REMOTE'
-            if curl -sf http://localhost/dashboard/ > /dev/null; then
+            ok=1
+            BODY=$(curl -sf http://localhost/dashboard/ || true)
+            echo "$BODY" | grep -q '红薯运营工作台' || { echo '❌ /dashboard/ 不是工作台（多半是 nginx 还没有这个 location，被兜到了 landing 页）'; ok=0; }
+
+            # sw.js 也要验内容：try_files 的兜底会把缺失文件回成 index.html（仍是 200），
+            # 只看状态码的话 public/ 没进 dist 也能「部署成功」。
+            SW=$(curl -sf http://localhost/dashboard/sw.js || true)
+            echo "$SW" | grep -q 'xhs-workbench-' || { echo '❌ /dashboard/sw.js 缺失或内容不对（public/ 资产没进 dist，或被兜成了 HTML）'; ok=0; }
+
+            # 入口页引用的 hashed JS 必须取得到、而且拿到的得是 JS。
+            # HTML 与 assets 不同源（只换了一半）时页面白屏，但上面两项照样过。
+            ASSET=$(echo "$BODY" | grep -o 'src="\./assets/[^"]*\.js"' | head -1 | sed 's/^src="\.\///; s/"$//')
+            if [ -z "$ASSET" ]; then
+              echo '❌ 入口页里找不到 assets 引用（构建产物被改坏了？）'; ok=0
+            else
+              AB=$(curl -sf "http://localhost/dashboard/${ASSET}" || true)
+              if [ -z "$AB" ] || echo "$AB" | grep -q '<!DOCTYPE html>'; then
+                echo "❌ ${ASSET} 取不到真实 JS（可能被 try_files 兜成了 HTML）"; ok=0
+              fi
+            fi
+
+            if [ "$ok" = 1 ]; then
               echo '✅ Frontend OK'
               sudo rm -rf /var/www/xhs-dashboard.old
             else
@@ -102,6 +138,8 @@ jobs:
                 sudo rm -rf /var/www/xhs-dashboard
                 sudo mv /var/www/xhs-dashboard.old /var/www/xhs-dashboard
                 echo '↩️  Rolled back to previous release'
+              else
+                echo '（没有上一版可回滚：这是首次部署，/var/www/xhs-dashboard.old 不存在）'
               fi
               exit 1
             fi
@@ -120,12 +158,15 @@ jobs:
               `- 运行: ${context.serverUrl || 'GitHub'}/actions/runs/${context.runId}`,
               `- 地址: http://${process.env.ECS_HOST || ''}/dashboard/`,
               '',
-              '若报的是 404，多半是 nginx 还没有 /dashboard/ 这个 location ——',
+              '若报的是「不是工作台」，多半是 nginx 还没有 /dashboard/ 这个 location ——',
               '见 deploy/nginx/xhs-dashboard.conf，需要人工在服务器上应用一次。',
+              '（注意：线上有 catch-all，路径没配也会返回 200 的 landing 页，',
+              '所以这一步是按内容判的，不是按状态码。）',
               '',
               '```bash',
               `ssh ${process.env.ECS_USER || 'admin'}@${process.env.ECS_HOST}`,
               'sudo ls /var/www/ | grep xhs-dashboard',
+              'curl -s http://localhost/dashboard/ | grep -o "<title>[^<]*"',
               '```',
             ].join('\n');
             await github.rest.issues.create({

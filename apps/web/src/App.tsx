@@ -31,11 +31,13 @@ function ThemeToggle() {
  * 工作台外壳。
  *
  * 三个业务模块共用一条头部栏：文案仿写、素材库（红薯助手的两个页面）、
- * 销售订单（原 Sales-order 项目，整页 iframe 接入）。
+ * 销售订单（React 原生页面，随本壳渲染）。
  *
- * 销售订单是这一层唯一的特例：它要占满整个视口，所以 .app-main 在
- * /orders 下去掉居中的 max-width 和内边距（CSS 里用 .app-main-flush
- * 覆盖），订单页在自己的文档里滚动，表头吸顶才仍然生效。
+ * 销售订单要占满整个视口宽度：.app-main 在 /orders 下去掉居中的
+ * max-width（CSS 里用 .app-main-flush 覆盖），17 列的订单表格才放得下。
+ * 注意不再锁 .app-shell-flush：旧 iframe 方案要求整壳一屏高、滚动只发生
+ * 在 iframe 内部，现在订单页和别的页面一样跟随外壳整体滚动，
+ * 它自己的 .orders-table-wrap 在桌面端维持内部吸顶滚动。
  *
  * 设置页已删除：其中唯一还需要的动作（风格画像「重新分析」）内联到了
  * 仿写页「我的风格」那一行；访问令牌不需要手动入口，服务端返回 401 时
@@ -51,7 +53,7 @@ export default function App() {
   const flush = pathname === '/orders';
 
   return (
-    <div className={`app-shell ${flush ? 'app-shell-flush' : ''}`}>
+    <div className="app-shell">
       <header className="app-header">
         <div className="app-header-inner">
           <div className="brand">

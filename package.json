@@ -1,0 +1,15 @@
+{
+  "name": "xhs-workbench",
+  "private": true,
+  "version": "1.0.0",
+  "description": "红薯运营工作台 — 文案仿写 / 素材库 / 销售订单，一个 React SPA + Express 后端",
+  "scripts": {
+    "dev:web": "npm --prefix apps/web run dev",
+    "dev:server": "npm --prefix apps/server run start",
+    "build": "npm --prefix apps/web run build",
+    "typecheck": "npm --prefix apps/web run typecheck",
+    "test": "npm --prefix apps/web run test && npm --prefix apps/server run test",
+    "hash-password": "node tools/hash-password.js"
+  },
+  "license": "UNLICENSED"
+}

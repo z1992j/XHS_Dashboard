@@ -1,5 +1,5 @@
 {
-  "name": "xhs-dashboard-server",
+  "name": "xhs-workbench-server",
   "version": "1.0.0",
   "private": true,
   "main": "src/index.js",
@@ -10,7 +10,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "小红书运营工作台后端 API（Express 5 + MySQL）",
+  "description": "红薯运营工作台后端 API（Express 5 + MySQL）",
   "dependencies": {
     "compression": "^1.8.0",
     "cors": "^2.8.6",

@@ -26,25 +26,44 @@ jobs:
             FAILURES="${FAILURES} API_health(${HTTP_CODE})"
           fi
 
-          # 2. 工作台外壳
-          HTTP_CODE2=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
-            http://47.252.19.224/dashboard/ || echo "000")
-          echo "Workbench /dashboard/ -> HTTP $HTTP_CODE2"
-          if [ "$HTTP_CODE2" != "200" ]; then
-            FAILURES="${FAILURES} Dashboard(${HTTP_CODE2})"
+          # 2. 工作台入口 —— 必须是「内容」检查，不是状态码。
+          #    47.252.19.224 的 nginx 是 catch-all：任意路径（包括 /nope-xyz）
+          #    都返回 200 + 旧落地页，只看 HTTP 200 会永远“假绿”。
+          #    真正的工作台入口 index.html 必须带「红薯运营工作台」标题。
+          DASH_HTML=$(curl -s --max-time 15 http://47.252.19.224/dashboard/ || echo "")
+          if ! echo "$DASH_HTML" | grep -q "红薯运营工作台"; then
+            echo "❌ /dashboard/ 未包含工作台标记（可能回落到 catch-all 旧页面）"
+            FAILURES="${FAILURES} Dashboard(content)"
+          else
+            echo "Workbench /dashboard/ -> 内容标记 OK"
           fi
 
-          # 3. 销售订单模块 —— 它是 iframe 里的静态页，单独探一次。
-          #    外壳 200 不代表它在：漏拷 public/orders 或路径前缀不匹配时，
-          #    外壳照常打开，只有点进「销售订单」才看到空白。
-          HTTP_CODE3=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
-            http://47.252.19.224/dashboard/orders/index.html || echo "000")
-          echo "Orders /dashboard/orders/index.html -> HTTP $HTTP_CODE3"
-          if [ "$HTTP_CODE3" != "200" ]; then
-            FAILURES="${FAILURES} Orders(${HTTP_CODE3})"
+          # 3. 入口 JS —— try_files 会把缺失的 .js 也“喂”成 index.html（200 但内容
+          #    是 HTML），构建损坏时页面白屏却全是 200。动态取哈希文件名再探一次。
+          ASSET=$(echo "$DASH_HTML" | sed -n 's/.*src="\(\.\/assets\/[^"]*\.js\)".*/\1/p' | head -1)
+          if [ -z "$ASSET" ]; then
+            echo "❌ /dashboard/ 里找不到 ./assets/*.js 入口（base 不是相对路径？）"
+            FAILURES="${FAILURES} EntryAsset(missing)"
+          else
+            ASSET_BODY=$(curl -s --max-time 15 "http://47.252.19.224/dashboard/${ASSET#./}" || echo "")
+            if [ -z "$ASSET_BODY" ] || echo "$ASSET_BODY" | head -1 | grep -qi "<!DOCTYPE html"; then
+              echo "❌ 入口 $ASSET 返回空或被 try_files 回落成 HTML"
+              FAILURES="${FAILURES} EntryAsset(fallback)"
+            else
+              echo "Entry $ASSET -> OK"
+            fi
           fi
 
-          # 4. Landing 页
+          # 4. Service Worker —— 离线缓存靠它；丢了不会白屏，但断网即挂，单独探。
+          SW_BODY=$(curl -s --max-time 15 http://47.252.19.224/dashboard/sw.js || echo "")
+          if ! echo "$SW_BODY" | grep -q "xhs-workbench-"; then
+            echo "❌ /dashboard/sw.js 缺失或不是本工作台的版本"
+            FAILURES="${FAILURES} ServiceWorker(content)"
+          else
+            echo "ServiceWorker /dashboard/sw.js -> 内容标记 OK"
+          fi
+
+          # 5. Landing 页
           HTTP_CODE4=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 \
             http://47.252.19.224/ || echo "000")
           echo "Landing / -> HTTP $HTTP_CODE4"
@@ -85,11 +104,17 @@ jobs:
               '',
               `- 时间: ${new Date().toISOString()}`,
               `- 失败项: ${process.env.HEALTH_FAILURES || '未知'}`,
-              `- 地址: http://47.252.19.224/dashboard/`,
+              `- 地址: http://47.252.19.224/dashboard/（web 根目录 /var/www/xhs-dashboard）`,
               '',
-              '请检查 ECS 服务状态:',
+              '> 注意：这台 nginx 是 catch-all，任何路径都会返回 200 + 旧落地页，',
+              '> 所以失败项是「内容标记」检查，不是状态码。看到 Dashboard(content) ',
+              '> 说明部署目录没换成功或被回滚了。',
+              '',
+              '排查:',
               '```bash',
               'ssh admin@47.252.19.224',
+              'grep -c 红薯运营工作台 /var/www/xhs-dashboard/index.html',
+              'ls -la /var/www/ | grep xhs-dashboard   # 有没有残留的 .old / .new',
               "cd ~/broadband-api && npx pm2 status",
               'curl http://localhost:3000/api/xhs/health',
               'sudo systemctl status nginx',

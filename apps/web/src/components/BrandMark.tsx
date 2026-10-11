@@ -25,7 +25,7 @@ export default function BrandMark({ size = 30 }: { size?: number }) {
       height={size}
       viewBox="0 0 32 32"
       role="img"
-      aria-label="小红书运营工作台"
+      aria-label="红薯运营工作台"
       className="brand-logo"
     >
       <circle cx="16" cy="16" r="13.5" fill="var(--primary)" />
